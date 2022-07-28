@@ -70,7 +70,7 @@ def train(model, data_loader, optimizer, tokenizer, epoch, warmup_steps, device,
 
 
 @torch.no_grad()
-def evaluation(model, data_loader, tokenizer, device, config):
+def evaluation(model, data_loader, tokenizer, device, config, only_text2image=False):
     # test
     model.eval() 
     
@@ -120,7 +120,7 @@ def evaluation(model, data_loader, tokenizer, device, config):
     num_tasks = utils.get_world_size()
     rank = utils.get_rank() 
 
-    if not args.only_text2image:
+    if not only_text2image:
         score_matrix_i2t = torch.full((len(data_loader.dataset.image),len(texts)),-100.0).to(device)
         step = sims_matrix.size(0)//num_tasks + 1
         start = rank*step
@@ -165,7 +165,7 @@ def evaluation(model, data_loader, tokenizer, device, config):
 
     if args.distributed:
         dist.barrier()   
-        if not args.only_text2image:
+        if not only_text2image:
             torch.distributed.all_reduce(score_matrix_i2t, op=torch.distributed.ReduceOp.SUM) 
         torch.distributed.all_reduce(score_matrix_t2i, op=torch.distributed.ReduceOp.SUM)        
         
@@ -173,7 +173,7 @@ def evaluation(model, data_loader, tokenizer, device, config):
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Evaluation time {}'.format(total_time_str)) 
 
-    if not args.only_text2image:
+    if not only_text2image:
         return score_matrix_i2t.cpu().numpy(), score_matrix_t2i.cpu().numpy()
 
     return None, score_matrix_t2i.cpu().numpy()
@@ -323,7 +323,7 @@ def main(args, config):
             train_stats = train(model, train_loader, optimizer, tokenizer, epoch, warmup_steps, device, lr_scheduler, config)  
             
         # score_val_i2t, score_val_t2i, = evaluation(model_without_ddp, val_loader, tokenizer, device, config)
-        score_test_i2t, score_test_t2i = evaluation(model_without_ddp, test_loader, tokenizer, device, config)
+        score_test_i2t, score_test_t2i = evaluation(model_without_ddp, test_loader, tokenizer, device, config, only_text2image=args.only_text2image)
     
         if utils.is_main_process():  
       
@@ -382,7 +382,7 @@ if __name__ == '__main__':
     parser.add_argument('--checkpoint', default='')   
     parser.add_argument('--text_encoder', default='bert-base-uncased')
     parser.add_argument('--evaluate', action='store_true')
-    parser.add_argument('--only_text2img', action='store_true')
+    parser.add_argument('--only_text2image', action='store_true')
     parser.add_argument('--device', default='cuda')
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--world_size', default=1, type=int, help='number of distributed processes')    
