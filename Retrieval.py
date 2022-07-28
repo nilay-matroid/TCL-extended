@@ -86,6 +86,7 @@ def evaluation(model, data_loader, tokenizer, device, config):
     text_feats = []
     text_embeds = []  
     text_atts = []
+    print('Computing text features for evaluation...')
     for i in range(0, num_text, text_bs):
         text = texts[i: min(num_text, i+text_bs)]
         text_input = tokenizer(text, padding='max_length', truncation=True, max_length=30, return_tensors="pt").to(device) 
@@ -101,11 +102,12 @@ def evaluation(model, data_loader, tokenizer, device, config):
     
     image_feats = []
     image_embeds = []
+    print('Computing image features for evaluation...')
     for image, img_id in data_loader: 
         image = image.to(device) 
         image_feat = model.visual_encoder(image)        
         image_embed = model.vision_proj(image_feat[:,0,:])            
-        image_embed = F.normalize(image_embed,dim=-1)      
+        image_embed = F.normalize(image_embed,dim=-1)     
         
         image_feats.append(image_feat)
         image_embeds.append(image_embed)
@@ -114,28 +116,30 @@ def evaluation(model, data_loader, tokenizer, device, config):
     image_embeds = torch.cat(image_embeds,dim=0)
     
     sims_matrix = image_embeds @ text_embeds.t()
-    score_matrix_i2t = torch.full((len(data_loader.dataset.image),len(texts)),-100.0).to(device)
     
     num_tasks = utils.get_world_size()
     rank = utils.get_rank() 
-    step = sims_matrix.size(0)//num_tasks + 1
-    start = rank*step
-    end = min(sims_matrix.size(0),start+step)
 
-    for i,sims in enumerate(metric_logger.log_every(sims_matrix[start:end], 50, header)): 
-        topk_sim, topk_idx = sims.topk(k=config['k_test'], dim=0)
+    if not args.only_text2image:
+        score_matrix_i2t = torch.full((len(data_loader.dataset.image),len(texts)),-100.0).to(device)
+        step = sims_matrix.size(0)//num_tasks + 1
+        start = rank*step
+        end = min(sims_matrix.size(0),start+step)
 
-        encoder_output = image_feats[start+i].repeat(config['k_test'],1,1)
-        encoder_att = torch.ones(encoder_output.size()[:-1],dtype=torch.long).to(device)
-        output = model.text_encoder(encoder_embeds = text_feats[topk_idx], 
-                                    attention_mask = text_atts[topk_idx],
-                                    encoder_hidden_states = encoder_output,
-                                    encoder_attention_mask = encoder_att,                             
-                                    return_dict = True,
-                                    mode = 'fusion'
-                                   )
-        score = model.itm_head(output.last_hidden_state[:,0,:])[:,1]
-        score_matrix_i2t[start+i,topk_idx] = score
+        for i,sims in enumerate(metric_logger.log_every(sims_matrix[start:end], 50, header)): 
+            topk_sim, topk_idx = sims.topk(k=config['k_test'], dim=0)
+
+            encoder_output = image_feats[start+i].repeat(config['k_test'],1,1)
+            encoder_att = torch.ones(encoder_output.size()[:-1],dtype=torch.long).to(device)
+            output = model.text_encoder(encoder_embeds = text_feats[topk_idx], 
+                                        attention_mask = text_atts[topk_idx],
+                                        encoder_hidden_states = encoder_output,
+                                        encoder_attention_mask = encoder_att,                             
+                                        return_dict = True,
+                                        mode = 'fusion'
+                                    )
+            score = model.itm_head(output.last_hidden_state[:,0,:])[:,1]
+            score_matrix_i2t[start+i,topk_idx] = score
         
     sims_matrix = sims_matrix.t()
     score_matrix_t2i = torch.full((len(texts),len(data_loader.dataset.image)),-100.0).to(device)
@@ -161,36 +165,41 @@ def evaluation(model, data_loader, tokenizer, device, config):
 
     if args.distributed:
         dist.barrier()   
-        torch.distributed.all_reduce(score_matrix_i2t, op=torch.distributed.ReduceOp.SUM) 
+        if not args.only_text2image:
+            torch.distributed.all_reduce(score_matrix_i2t, op=torch.distributed.ReduceOp.SUM) 
         torch.distributed.all_reduce(score_matrix_t2i, op=torch.distributed.ReduceOp.SUM)        
         
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Evaluation time {}'.format(total_time_str)) 
 
-    return score_matrix_i2t.cpu().numpy(), score_matrix_t2i.cpu().numpy()
+    if not args.only_text2image:
+        return score_matrix_i2t.cpu().numpy(), score_matrix_t2i.cpu().numpy()
+
+    return None, score_matrix_t2i.cpu().numpy()
 
 
             
 @torch.no_grad()
-def itm_eval(scores_i2t, scores_t2i, txt2img, img2txt):
+def itm_eval(scores_i2t, scores_t2i, txt2img, img2txt, only_text2image=False):
     
-    #Images->Text 
-    ranks = np.zeros(scores_i2t.shape[0])
-    for index,score in enumerate(scores_i2t):
-        inds = np.argsort(score)[::-1]
-        # Score
-        rank = 1e20
-        for i in img2txt[index]:
-            tmp = np.where(inds == i)[0][0]
-            if tmp < rank:
-                rank = tmp
-        ranks[index] = rank
+    if not only_text2image:
+        #Images->Text 
+        ranks = np.zeros(scores_i2t.shape[0])
+        for index,score in enumerate(scores_i2t):
+            inds = np.argsort(score)[::-1]
+            # Score
+            rank = 1e20
+            for i in img2txt[index]:
+                tmp = np.where(inds == i)[0][0]
+                if tmp < rank:
+                    rank = tmp
+            ranks[index] = rank
 
-    # Compute metrics
-    tr1 = 100.0 * len(np.where(ranks < 1)[0]) / len(ranks)
-    tr5 = 100.0 * len(np.where(ranks < 5)[0]) / len(ranks)
-    tr10 = 100.0 * len(np.where(ranks < 10)[0]) / len(ranks)
+        # Compute metrics
+        tr1 = 100.0 * len(np.where(ranks < 1)[0]) / len(ranks)
+        tr5 = 100.0 * len(np.where(ranks < 5)[0]) / len(ranks)
+        tr10 = 100.0 * len(np.where(ranks < 10)[0]) / len(ranks)
   
     #Text->Images 
     ranks = np.zeros(scores_t2i.shape[0])
@@ -204,19 +213,27 @@ def itm_eval(scores_i2t, scores_t2i, txt2img, img2txt):
     ir5 = 100.0 * len(np.where(ranks < 5)[0]) / len(ranks)
     ir10 = 100.0 * len(np.where(ranks < 10)[0]) / len(ranks)        
 
-    tr_mean = (tr1 + tr5 + tr10) / 3
     ir_mean = (ir1 + ir5 + ir10) / 3
-    r_mean = (tr_mean + ir_mean) / 2
 
-    eval_result =  {'txt_r1': tr1,
-                    'txt_r5': tr5,
-                    'txt_r10': tr10,
-                    'txt_r_mean': tr_mean,
-                    'img_r1': ir1,
-                    'img_r5': ir5,
-                    'img_r10': ir10,
-                    'img_r_mean': ir_mean,
-                    'r_mean': r_mean}
+    if not only_text2image:
+        tr_mean = (tr1 + tr5 + tr10) / 3
+        r_mean = (tr_mean + ir_mean) / 2
+
+    if not only_text2image:
+        eval_result =  {'txt_r1': tr1,
+                        'txt_r5': tr5,
+                        'txt_r10': tr10,
+                        'txt_r_mean': tr_mean,
+                        'img_r1': ir1,
+                        'img_r5': ir5,
+                        'img_r10': ir10,
+                        'img_r_mean': ir_mean,
+                        'r_mean': r_mean}
+    else:
+        eval_result =  {'img_r1': ir1,
+                        'img_r5': ir5,
+                        'img_r10': ir10,
+                        'img_r_mean': ir_mean}
     return eval_result
 
 
@@ -233,6 +250,7 @@ def main(args, config):
     np.random.seed(seed)
     random.seed(seed)
     cudnn.benchmark = True
+    torch.cuda.empty_cache()
 
     #### Dataset #### 
     print("Creating retrieval dataset")
@@ -279,6 +297,7 @@ def main(args, config):
         
     
     model = model.to(device)   
+    print("### Total Params: ", sum(p.numel() for p in model.parameters() if p.requires_grad))
     
     model_without_ddp = model
     if args.distributed:
@@ -303,19 +322,18 @@ def main(args, config):
                 train_loader.sampler.set_epoch(epoch)
             train_stats = train(model, train_loader, optimizer, tokenizer, epoch, warmup_steps, device, lr_scheduler, config)  
             
-        score_val_i2t, score_val_t2i, = evaluation(model_without_ddp, val_loader, tokenizer, device, config)
+        # score_val_i2t, score_val_t2i, = evaluation(model_without_ddp, val_loader, tokenizer, device, config)
         score_test_i2t, score_test_t2i = evaluation(model_without_ddp, test_loader, tokenizer, device, config)
     
         if utils.is_main_process():  
       
-            val_result = itm_eval(score_val_i2t, score_val_t2i, val_loader.dataset.txt2img, val_loader.dataset.img2txt)  
-            print(val_result)
-            test_result = itm_eval(score_test_i2t, score_test_t2i, test_loader.dataset.txt2img, test_loader.dataset.img2txt)    
+            # val_result = itm_eval(score_val_i2t, score_val_t2i, val_loader.dataset.txt2img, val_loader.dataset.img2txt)  
+            # print(val_result)
+            test_result = itm_eval(score_test_i2t, score_test_t2i, test_loader.dataset.txt2img, test_loader.dataset.img2txt, only_text2image=args.only_text2image)    
             print(test_result)
             
             if args.evaluate:                
-                log_stats = {**{f'val_{k}': v for k, v in val_result.items()},
-                             **{f'test_{k}': v for k, v in test_result.items()},                  
+                log_stats = {**{f'test_{k}': v for k, v in test_result.items()},                  
                              'epoch': epoch,
                             }
                 with open(os.path.join(args.output_dir, "log.txt"),"a") as f:
@@ -364,6 +382,7 @@ if __name__ == '__main__':
     parser.add_argument('--checkpoint', default='')   
     parser.add_argument('--text_encoder', default='bert-base-uncased')
     parser.add_argument('--evaluate', action='store_true')
+    parser.add_argument('--only_text2img', action='store_true')
     parser.add_argument('--device', default='cuda')
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--world_size', default=1, type=int, help='number of distributed processes')    
