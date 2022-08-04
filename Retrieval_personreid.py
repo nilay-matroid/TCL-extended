@@ -123,7 +123,7 @@ def evaluation(model, data_loader, tokenizer, device, config, only_text2image=Fa
     rank = utils.get_rank() 
 
     if not only_text2image:
-        score_matrix_i2t = torch.full((len(data_loader.dataset.image),len(texts)),-100.0).to(device)
+        score_matrix_i2t = torch.full((len(data_loader.dataset.imgs),len(texts)),-100.0).to(device)
         step = sims_matrix.size(0)//num_tasks + 1
         start = rank*step
         end = min(sims_matrix.size(0),start+step)
@@ -145,7 +145,7 @@ def evaluation(model, data_loader, tokenizer, device, config, only_text2image=Fa
             score_matrix_i2t[start+i,topk_idx] = score
         
     sims_matrix = sims_matrix.t()
-    score_matrix_t2i = torch.full((len(texts),len(data_loader.dataset.image)),-100.0).to(device)
+    score_matrix_t2i = torch.full((len(texts),len(data_loader.dataset.imgs)),-100.0).to(device)
     
     step = sims_matrix.size(0)//num_tasks + 1
     start = rank*step

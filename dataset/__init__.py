@@ -8,6 +8,7 @@ from dataset.nlvr_dataset import nlvr_dataset
 from dataset.ve_dataset import ve_dataset
 from dataset.vqa_dataset import vqa_dataset
 from dataset.grounding_dataset import grounding_dataset
+from dataset.RSTPReid import RSTPReid, RSTPReidTrain
 
 from dataset.randaugment import RandomAugment
 from dataset.utils import GaussianBlur
@@ -55,6 +56,13 @@ def create_dataset(dataset, config):
         train_dataset = re_train_dataset(config['train_file'], train_transform, config['image_root'])
         val_dataset = re_eval_dataset(config['val_file'], test_transform, config['image_root'])  
         test_dataset = re_eval_dataset(config['test_file'], test_transform, config['image_root'])                
+        return train_dataset, val_dataset, test_dataset 
+
+    elif dataset=='personreid_re':     
+        train_dataset = RSTPReidTrain(config['image_root'], image_transform=train_transform, split='train',\
+             shuffle=True, print_stats=True, do_pre_caption=True, max_words=30)
+        val_dataset = RSTPReid(config['image_root'], split='val', transform=test_transform)  
+        test_dataset = RSTPReid(config['image_root'], split='test', transform=test_transform)           
         return train_dataset, val_dataset, test_dataset   
 
     elif dataset=='vqa': 
