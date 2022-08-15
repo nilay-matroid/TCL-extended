@@ -1,3 +1,107 @@
+# Matroid-TCL-extended
+## Introduction
+This is a modified implementation of "Vision-Language Pre-Training with Triple Contrastive Learning" to be used for Text-Image search especially on a Text based Person Reid dataset (RSTPReid). The model is evaluated on three datasets, namely - MSCOCO, Flickr30k and RSTPReid. This documentation covers how to evaluate the model on all of these datasets as well as train the model on RSTPReid dataset.
+
+## Environment
+Set up the conda environment
+```bash
+conda env create -f environment.yml
+conda activate tcl
+```
+
+## Evaluation scripts
+- MSCOCO-5k 
+  - Zero shot
+    ```bash
+    mkdir output/pretrain_e30_Retrieval_coco_zeroshot
+
+    python -m torch.distributed.launch --nproc_per_node=4 --master_port 66660 \
+    --use_env Retrieval.py --config ./configs/Retrieval_coco.yaml \
+    --output_dir output/pretrain_e30_Retrieval_coco_zeroshot \
+    --checkpoint checkpoints/TCL_4M.pth --only_text2image \
+    --evaluate > output/pretrain_e30_Retrieval_coco_zeroshot/output.txt
+    ```
+
+  - Fine Tuned
+    ```bash
+    mkdir output/pretrain_e30_Retrieval_coco_finetuned
+
+    python -m torch.distributed.launch --nproc_per_node=1 --nnodes=2 --master_port 66660 \
+    --use_env Retrieval.py --config ./configs/Retrieval_coco.yaml \
+    --output_dir output/pretrain_e30_Retrieval_coco_finetuned \
+    --checkpoint checkpoints/checkpoint_coco_finetune.pth --only_text2image \
+    --evaluate > output/pretrain_e30_Retrieval_coco_finetuned/output.txt
+    ```
+
+- Flickr30k
+  - Fine Tuned
+    ```bash
+    mkdir output/pretrain_e30_Retrieval_flickr_finetuned
+
+    python -m torch.distributed.launch --nproc_per_node=1 --nnodes=1 --master_port 66660 \
+    --use_env Retrieval.py --config ./configs/Retrieval_flickr.yaml \
+    --output_dir output/pretrain_e30_Retrieval_flickr_finetuned \
+    --checkpoint checkpoints/checkpoint_flickr_finetune.pth --only_text2image \
+    --evaluate > output/pretrain_e30_Retrieval_flickr_finetuned/output.txt
+    ```
+
+  - Zero shot
+    ```bash
+    mkdir output/pretrain_e30_Retrieval_flickr_zeroshot
+
+    python -m torch.distributed.launch --nproc_per_node=1 --nnodes=1 --master_port 66660 \
+    --use_env Retrieval.py --config ./configs/Retrieval_flickr.yaml \
+    --output_dir output/pretrain_e30_Retrieval_flickr_zeroshot \
+    --checkpoint checkpoints/TCL_4M.pth --only_text2image \
+    --evaluate > output/pretrain_e30_Retrieval_flickr_zeroshot/output.txt
+    ```
+
+- RSTPReid 
+  - Fully Zero shot
+    ```bash
+    mkdir output/pretrain_e30_Retrieval_rstpreid_zeroshot
+
+    python -m torch.distributed.launch --nproc_per_node=4 --master_port 66660 \
+    --use_env Retrieval_personreid.py --config ./configs/rstpreid/Retrieval_rstpreid.yaml \
+    --output_dir output/pretrain_e30_Retrieval_rstpreid_zeroshot \
+    --checkpoint checkpoints/TCL_4M.pth --only_text2image \
+    --evaluate > output/pretrain_e30_Retrieval_rstpreid_zeroshot/output.txt
+    ```
+
+  - Fine Tuned on MSCOCO
+    ```bash
+    mkdir output/pretrain_e30_Retrieval_rstpreid_finetuned
+
+    python -m torch.distributed.launch --nproc_per_node=4 --master_port 66663 \
+    --use_env Retrieval_personreid.py --config ./configs/rstpreid/Retrieval_rstpreid.yaml \
+    --output_dir output/pretrain_e30_Retrieval_rstpreid_finetuned \
+    --checkpoint checkpoints/checkpoint_coco_finetune.pth --only_text2image \
+    --evaluate > output/pretrain_e30_Retrieval_rstpreid_finetuned/output.txt
+    ```
+
+  - Fine Tuned on Flickr30k
+    ```bash
+    mkdir output/pretrain_e30_Retrieval_rstpreid_finetuned_flickr30k
+
+    python -m torch.distributed.launch --nproc_per_node=4 --master_port 66664 \
+    --use_env Retrieval_personreid.py --config ./configs/rstpreid/Retrieval_rstpreid.yaml \
+    --output_dir output/pretrain_e30_Retrieval_rstpreid_finetuned_flickr30k \
+    --checkpoint checkpoints/checkpoint_flickr_finetune.pth --only_text2image \
+    --evaluate > output/pretrain_e30_Retrieval_rstpreid_finetuned_flickr30k/output.txt
+    ```
+
+
+## Finetuning on RSTPReid
+  - From zero shot
+    ```bash
+    mkdir output/finetune_e30_Retrieval_rstpreid_from_zeroshot 
+
+    python -m torch.distributed.launch --nproc_per_node=4 --master_port 66665 \
+    --use_env Retrieval_personreid.py --config ./configs/rstpreid/Retrieval_rstpreid.yaml \
+    --output_dir output/finetune_e30_Retrieval_rstpreid_from_zeroshot \
+    --checkpoint checkpoints/TCL_4M.pth --only_text2image > output/finetune_e30_Retrieval_rstpreid_from_zeroshot/output3.txt
+    ```
+
 # Vision-Language Pre-Training with Triple Contrastive Learning, CVPR 2022
 
 ### News
